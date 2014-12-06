@@ -1,6 +1,8 @@
 import time
+
 from channel import Channel
 from client import Client
+
 
 __author__ = 'mark'
 from Queue import Queue
@@ -24,7 +26,7 @@ class IRCServer(object):
             for client_hash in self._clients.keys():
                 try:
                     self._clients[client_hash].connection.send("PING")
-                except:
+                except IOError:
                     for clnt in self._clients.keys():
                         if clnt == client_hash:
                             print "[DBG] %s disconnected because the socket is dead" % \
@@ -32,7 +34,6 @@ class IRCServer(object):
                             for cln in self._clients.values():
                                 cln.connection.send("%s QUIT :Connection closed" % self._clients[clnt].nick)
                             del self._clients[clnt]
-
 
     def _message_thread(self):
         while self.running:
@@ -55,7 +56,7 @@ class IRCServer(object):
             print command_args
             if command == "NICK":
                 if len(command_args) < 1:
-                    conn.send("461 %s :Not enough parameters" % command)
+                    self._send_not_enough_parameters(conn, command)
                 elif not hash(conn) in self._clients:
                     self._clients[hash(conn)] = Client(connection=conn, nick=command_args[0])
                     print "[DBG] Client connected!"
@@ -64,30 +65,33 @@ class IRCServer(object):
             elif command == "USER":
                 if hash(conn) in self._clients:
                     if len(command_args) < 1:
-                        conn.send("461 %s :Not enough parameters" % command)
+                        self._send_not_enough_parameters(conn, command)
                     else:
                         self._clients[hash(conn)].real_name = command_args[:]
-                        self._clients[hash(conn)].identifier = self._clients[hash(conn)].nick + "!" +\
-                                                             command_args[0] + "@" + self.name
+                        self._clients[hash(conn)].identifier = self._clients[hash(conn)].nick + "!" + \
+                                                               command_args[0] + "@" + self.name
                         self._send_motd(conn)
                 else:  # Another way to identifyy is USER command.
                     if len(command_args) < 1:
-                        conn.send("461 %s :Not enough parameters" % command)
+                        self._send_not_enough_parameters(conn, command)
                     else:
                         self._clients[hash(conn)] = Client(connection=conn, nick=command_args[0])
                         self._send_motd(conn)
             elif command == "PRIVMSG" or command == "NOTICE":
                 if len(command_args) < 2:
-                    conn.send("461 %s :Not enough parameters" % command)
+                    self._send_not_enough_parameters(conn, command)
                 else:
                     src = self._clients[hash(conn)].identifier
                     dest = command_args[0]
                     if not dest.startswith("#"):
-                            for clnt in self._clients.values():
-                                if clnt.nick == dest:
-                                    clnt.connection.send(
-                                        ":%s %s %s %s" % (src, command, dest, "".join(command_args[1:]))
-                                    )
+                        for clnt in self._clients.values():
+                            if clnt.nick == dest:
+                                clnt.connection.send(
+                                    ":%s %s %s %s" % (src, command, dest, "".join(command_args[1:]))
+                                )
+                                break
+                        else:
+                            self._send_no_user(conn, dest)
                     else:
                         for chan in self._channels:
                             if chan.name == dest:
@@ -95,9 +99,12 @@ class IRCServer(object):
                                     if chan in clnt.channels:
                                         clnt.connection.send(":%s %s %s %s" %
                                                              (src, command, dest, "".join(command_args[1:])))
+                                        break
+                        else:
+                            self._send_no_user(conn, dest)
             elif command == "JOIN":
                 if len(command_args) < 1:
-                    conn.send("461 %s :Not enough parameters" % command)
+                    self._send_not_enough_parameters(conn, command)
                 else:
                     for chan in self._channels:
                         if chan.name == command_args[0]:
@@ -108,8 +115,10 @@ class IRCServer(object):
                             chan.users -= 1
                             for client in self._clients.values():
                                 if chan in client.channels:
-                                    client.connection.send(":%s JOIN %s" % (self._clients[hash(conn)].identifier, chan.name))
+                                    client.connection.send(
+                                        ":%s JOIN %s" % (self._clients[hash(conn)].identifier, chan.name))
                             conn.send(":%s JOIN %s" % (self._clients[hash(conn)].identifier, chan.name))
+                            self._send_topic(conn, chan)
                             self._send_names(conn, chan)
                     else:
                         chan = Channel(command_args[0], 1)
@@ -120,7 +129,7 @@ class IRCServer(object):
                                                    command_args[0]))
             elif command == "PART":
                 if len(command_args) < 1:
-                    conn.send("461 %s :Not enough parameters" % command)
+                    self._send_not_enough_parameters(conn, command)
                 else:
                     for chan in self._channels:
                         if chan.name == command_args[0]:
@@ -141,6 +150,26 @@ class IRCServer(object):
                             client.connection.send("%s QUIT %s" % (self._clients[hash(conn)].nick,
                                                                    " ".join(command_args)))
                             break
+                    else:
+                        self._send_no_channel(conn, command_args[0])
+            elif command == "TOPIC":
+                if len(command_args) < 1:
+                    self._send_not_enough_parameters(conn, command)
+                elif len(command_args) == 1:
+                    for chan in self._channels:
+                        if chan.name == command_args[0]:
+                            self._send_topic(conn, chan)
+                            break
+                elif len(command_args) == 2:
+                    for chan in self._channels:
+                        if chan.name == command_args[0]:
+                            topic = command_args[1]
+                            if topic[0] == ":":
+                                topic = topic[1:]
+                            chan.topic = topic
+                            break
+                    else:
+                        self._send_no_channel(conn, command_args[0])
 
     def _server_thread(self):
         self._connections = []
@@ -151,8 +180,7 @@ class IRCServer(object):
                 self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 self._sock.bind(self._bind_address)
                 break
-            except socket.error as err:
-                # print "Failed to open socket, attempting again: %s" % err.message
+            except socket.error:
                 pass
         self._sock.listen(1)
         print "Listening..."
@@ -196,6 +224,26 @@ class IRCServer(object):
                 names.append(client.nick)
         conn.send(":%s 353 %s = %s :%s" % (self.name, nick, chan.name, " ".join(names)))
         conn.send(":%s 366 %s :End of NAMES list" % (self.name, chan.name))
+
+    def _send_topic(self, conn, chan):
+        nick = self._clients[hash(conn)].nick
+        topic = chan.topic
+        if len(topic):
+            conn.send(":%s 332 %s %s" % (self.name, nick, chan.topic))
+        else:
+            conn.send(":%s 331 %s :No topic is set" % (self.name, nick))
+
+    def _send_no_channel(self, conn, chan_name):
+        nick = self._clients[hash(conn)].nick
+        conn.send(":%s 403 %s %s :No such channel" % (self.name, nick, chan_name))
+
+    def _send_no_user(self, conn, target):
+        nick = self._clients[hash(conn)].nick
+        conn.send(":%s 401 %s %s :No such nick/channel" % (self.name, nick, target))
+
+    def _send_not_enough_parameters(self, conn, command):
+        nick = self._clients[hash(conn)].nick
+        conn.send(":%s 461 %s %s :Not enough parameters" % (self.name, nick, command))
 
     def __del__(self):
         self._sock.close()

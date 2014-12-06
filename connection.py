@@ -27,7 +27,10 @@ class Connection(object):
         return messages
 
     def send(self, data):
-        self._connection.send(data + "\r\n")
+        try:
+            self._connection.send(data + "\r\n")
+        except socket.error as e:
+            raise IOError("Can't send to socket: " + e.message)
 
 
 
