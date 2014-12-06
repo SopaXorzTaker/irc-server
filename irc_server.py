@@ -189,7 +189,7 @@ class IRCServer(object):
             sock.setblocking(0)
             conn = connection.Connection(address, sock)
             self._connections.append(conn)
-            conn.send(":%s 251 %s :There are 0 users on 1 server." % (self.name, self.name))
+            conn.send(":%s 251 %s :There are %d users on 1 server." % (self.name, len(self._clients), self.name))
             print "Connection! %s" % str(address)
 
     def __init__(self, bind_address, name="server", motd="Hello, World"):
