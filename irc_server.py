@@ -63,8 +63,13 @@ class IRCServer(object):
                     self._clients[hash(conn)].nick = command_args[0]
             elif command == "USER":
                 if hash(conn) in self._clients:
-                    self._clients[hash(conn)].real_name = command_args[:]
-                    self._send_motd(conn)
+                    if len(command_args) < 1:
+                        conn.send("461 %s :Not enough parameters" % command)
+                    else:
+                        self._clients[hash(conn)].real_name = command_args[:]
+                        self._clients[hash(conn)].identifier = self._clients[hash(conn)].nick + "!" +\
+                                                             command_args[0] + "@" + self.name
+                        self._send_motd(conn)
                 else:  # Another way to identifyy is USER command.
                     if len(command_args) < 1:
                         conn.send("461 %s :Not enough parameters" % command)
@@ -75,7 +80,7 @@ class IRCServer(object):
                 if len(command_args) < 2:
                     conn.send("461 %s :Not enough parameters" % command)
                 else:
-                    src = self._clients[hash(conn)].nick
+                    src = self._clients[hash(conn)].identifier
                     dest = command_args[0]
                     if not dest.startswith("#"):
                             for clnt in self._clients.values():
@@ -98,20 +103,20 @@ class IRCServer(object):
                         if chan.name == command_args[0]:
                             chan.users += 1
                             self._clients[hash(conn)].channels.append(chan)
-                            # conn.send(":%s JOIN %s" % (self._clients[hash(conn)].nick, chan.name))
+                            # conn.send(":%s JOIN %s" % (self._clients[hash(conn)].identifier, chan.name))
                             self._clients[hash(conn)].channels.remove(chan)
                             chan.users -= 1
                             for client in self._clients.values():
                                 if chan in client.channels:
-                                    client.connection.send(":%s JOIN %s" % (self._clients[hash(conn)].nick, chan.name))
-                            conn.send(":%s JOIN %s" % (self._clients[hash(conn)].nick, chan.name))
+                                    client.connection.send(":%s JOIN %s" % (self._clients[hash(conn)].identifier, chan.name))
+                            conn.send(":%s JOIN %s" % (self._clients[hash(conn)].identifier, chan.name))
                             self._send_names(conn, chan)
                     else:
                         chan = Channel(command_args[0], 1)
                         chan.users = 1  # We have a user, because we have created it!
                         self._channels.append(chan)
                         self._clients[hash(conn)].channels.append(chan)
-                        conn.send(":%s JOIN %s" % (self._clients[hash(conn)].nick,
+                        conn.send(":%s JOIN %s" % (self._clients[hash(conn)].identifier,
                                                    command_args[0]))
             elif command == "PART":
                 if len(command_args) < 1:
@@ -156,7 +161,7 @@ class IRCServer(object):
             sock.setblocking(0)
             conn = connection.Connection(address, sock)
             self._connections.append(conn)
-            conn.send(":boo 251 boo :There are 0 users on 1 server.")
+            conn.send(":%s 251 %s :There are 0 users on 1 server." % (self.name, self.name))
             print "Connection! %s" % str(address)
 
     def __init__(self, bind_address, name="server", motd="Hello, World"):
@@ -177,18 +182,20 @@ class IRCServer(object):
         self.running = False
 
     def _send_motd(self, conn):
-        conn.send("375 :- %s Message of the day - " % self.name)
+        nick = self._clients[hash(conn)].nick
+        conn.send(":%s 375 %s :- Message of the day - " % (self.name, nick))
         for line in self.motd.split("\n"):
-            conn.send("372 :- %s" % line)
-        conn.send("376 :End of MOTD command")
+            conn.send(":%s 372 %s :- %s" % (self.name, nick, line))
+        conn.send(":%s 376 %s :End of MOTD command" % (self.name, nick))
 
     def _send_names(self, conn, chan):
         names = []
+        nick = self._clients[hash(conn)].nick
         for client in self._clients.values():
             if chan.name in client.channels:
                 names.append(client.nick)
-        conn.send("353 %s = %s :%s" % (self._clients[hash(conn)].nick, chan.name, " ".join(names)))
-        conn.send("366 %s :End of NAMES list" % chan.name)
+        conn.send(":%s 353 %s = %s :%s" % (self.name, nick, chan.name, " ".join(names)))
+        conn.send(":%s 366 %s :End of NAMES list" % (self.name, chan.name))
 
     def __del__(self):
         self._sock.close()

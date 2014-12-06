@@ -6,4 +6,5 @@ class Client(object):
         self.nick = nick
         self.connection = connection
         self.real_name = None
+        self.identifier = None
         self.channels = []
