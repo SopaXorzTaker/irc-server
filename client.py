@@ -8,3 +8,4 @@ class Client(object):
         self.real_name = None
         self.identifier = None
         self.channels = []
+        self.last_pinged = 0

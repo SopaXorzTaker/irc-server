@@ -22,12 +22,16 @@ class Connection(object):
                 break
         for line in data.split("\r\n"):
             if len(line):
+                #TODO: remove me
+                print "[DBG] < %s" % line
                 messages.append(Message(line, self))
 
         return messages
 
     def send(self, data):
         try:
+            #TODO: remove me
+            print "[DBG] > %s" % data
             self._connection.send(data + "\r\n")
         except socket.error as e:
             raise IOError("Can't send to socket: " + e.message)
