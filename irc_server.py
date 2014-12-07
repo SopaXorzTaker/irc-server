@@ -24,7 +24,6 @@ class IRCServer(object):
         while self.running:
             time.sleep(1.0)
             for conn in self._clients.keys():
-                #TODO: change the testing value to 250
                 if self._clients[conn].last_pinged >= 250:
                     print "[DBG] %s disconnected because ping has timed-out" % \
                           str(conn.address)
