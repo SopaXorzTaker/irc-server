@@ -65,9 +65,12 @@ class IRCServer(object):
                     self._clients[conn] = Client(connection=conn, nick=command_args[0])
                     print "[DBG] Client connected!"
                 else:
+                    print "[DBG] %s is changing nick to %s!" % (self._clients[conn].nick, command_args[0])
+                    old_ident = self._clients[conn].identifier
                     self._clients[conn].nick = command_args[0]
                     self._clients[conn].identifier = self._clients[conn].get_nick() + "!" + \
                                                         command_args[0] + "@" + self.name
+                    self._send_to_related(conn, ":%s NICK %s" % (old_ident, command_args[0]))
             elif command == "USER":
                 self._send_lusers(conn)
                 if conn in self._clients:
@@ -102,12 +105,8 @@ class IRCServer(object):
                     else:
                         for chan in self._channels:
                             if chan.name == dest:
-                                for clnt in self._clients.values():
-                                    if clnt.nick != self._clients[conn].get_nick():
-                                        if chan in clnt.channels:
-                                            clnt.connection.send(":%s %s %s %s" %
+                                self._channel_broadcast(conn, chan, ":%s %s %s %s" %
                                                              (src, command, dest, "".join(command_args[1:])))
-                                            break
                                 break
                         else:
                             self._send_no_user(conn, dest)
@@ -119,12 +118,8 @@ class IRCServer(object):
                         if chan.name == command_args[0]:
                             chan.users += 1
                             self._clients[conn].channels.append(chan)
-
-                            for client in self._clients.values():
-                                if chan in client.channels:
-                                    client.connection.send(
-                                        ":%s JOIN %s" % (self._clients[conn].get_identifier(), chan.name))
-                            self._clients[conn].send(":%s JOIN %s" % (self._clients[conn].get_identifier(), chan.name))
+                            self._send_to_related(conn, ":%s JOIN %s" % (self._clients[conn].get_identifier(),
+                                                                         chan.name), True)
                             self._send_topic(conn, chan)
                             self._send_names(conn, chan)
                     else:
@@ -141,12 +136,8 @@ class IRCServer(object):
                     for chan in self._channels:
                         if chan.name == command_args[0]:
 
-                            for client in self._clients.values():
-                                if chan in client.channels:
-                                    print "[DBG] Notified %s about %s leaving the channel." % \
-                                          (client.nick, self._clients[conn].get_nick())
-                                    self._clients[conn].send(":%s PART %s" % (self._clients[conn].get_identifier(),
-                                              command_args[0]))
+                            self._send_to_related(conn, ":%s PART %s" % (self._clients[conn].get_identifier(),
+                                                                         command_args[0]))
                             self._clients[conn].channels.remove(chan)
                             chan.users -= 1
                             break
@@ -314,17 +305,32 @@ class IRCServer(object):
 
     def disconnect(self, conn, message):
         client = self._clients[conn]
-        for clnt in self._clients.values():
-            for chan in clnt.channels:
-                if chan in client.channels:
-                    clnt.connection.send(":%s QUIT :%s" % client.identifier, message)
-                    break
+        self._send_to_related(conn, ":%s QUIT :%s" % client.identifier, message)
         try:
             self._clients[conn].send("ERROR :Closing link [%s]: Disconnected" % conn.address)
         except IOError:
             pass
         del self._clients[conn]
 
+    def _send_to_related(self, conn, msg, ignore_self=False):
+        clnt = self._clients[conn]
+        for client in self._clients.values():
+            if ignore_self and client != conn:
+                continue
+
+            for channel in client.channels:
+                if channel in clnt.channels:
+                    client.connection.send(msg)
+                    break
+
+    def _channel_broadcast(self, conn, chan, msg):
+        for client in self._clients.values():
+            if client.nick == self._clients[conn].nick:
+                continue
+            if chan in client.channels:
+                client.send(msg)
+
     def __del__(self):
         self._sock.close()
+        del self._sock
         self.stop()
