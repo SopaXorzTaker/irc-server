@@ -9,3 +9,15 @@ class Client(object):
         self.identifier = None
         self.channels = []
         self.last_pinged = 0
+
+    def get_nick(self):
+        return self.nick
+
+    def get_identifier(self):
+        return self.identifier
+
+    def get_real_name(self):
+        return self.real_name
+
+    def send(self, data):
+        self.connection.send(data)
