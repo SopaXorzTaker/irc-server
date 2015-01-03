@@ -167,7 +167,7 @@ class IRCServer(object):
                         self._send_no_channel(conn, command_args[0])
 
             elif command == "PING":
-                if len(command_args):
+                if len(command_args) >= 2:
                     self._clients[conn].send("PONG %s" % command_args[1])
                 else:
                     self._clients[conn].send("PONG")
