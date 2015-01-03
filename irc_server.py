@@ -102,13 +102,15 @@ class IRCServer(object):
                         self._nick_change_failed.remove(conn)
                     else:
                         if self._set_nick(conn, command_args[0]):
+                            self._clients[conn].identifier = self._clients[conn].get_nick() + "!" + \
+                                command_args[0] + "@" + self.name
                             self._send_motd(conn)
             elif command == "PRIVMSG" or command == "NOTICE":
                 if len(command_args) < 2:
                     self._send_not_enough_parameters(conn, command)
                 else:
                     message_text = command_args[1] if not command_args[1][0] == ":" else \
-                        text.replace("\r\n", "")[text.index(":"):]
+                        text.replace("\r\n", "")[text.index(":")+1:]
                     src = self._clients[conn].get_identifier()
                     dest = command_args[0]
                     if not dest.startswith("#"):
@@ -394,7 +396,9 @@ class IRCServer(object):
             if not conn in self._clients:
                 self._clients[conn] = Client(connection=conn, nick=nick)
             else:
+                old_nick = self._clients[conn].nick
                 self._clients[conn].nick = nick
+                self._send_to_related(conn, "%s NICK %s" % (old_nick, nick))
             return True
 
 
