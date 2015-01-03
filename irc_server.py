@@ -83,25 +83,29 @@ class IRCServer(object):
                 if len(command_args) < 1:
                     self._send_not_enough_parameters(conn, command)
                 else:
-                    if not self._set_nick(conn, command_args[0]):
+                    ident = self._clients[conn].identifier if self._clients[conn].identifier else None
+                    if not self._set_nick(conn, command_args[0], ident):
                         self._nick_change_failed.append(conn)
             elif command == "USER":
                 if conn in self._clients:
-                    if len(command_args) < 1:
+                    if len(command_args) < 2:
                         self._send_not_enough_parameters(conn, command)
                     else:
+                        ''''
                         self._send_lusers(conn)
                         self._clients[conn].real_name = command_args[:]
                         self._clients[conn].identifier = self._clients[conn].get_nick() + "!" + \
                                                                command_args[0] + "@" + self.name
+                        '''
+                        self._set_nick(conn, command_args[0], command_args[1])
                         self._send_motd(conn)
                 else:  # Another way to identify is USER command.
-                    if len(command_args) < 1:
+                    if len(command_args) < 2:
                         self._send_not_enough_parameters(conn, command)
                     elif conn in self._nick_change_failed:
                         self._nick_change_failed.remove(conn)
                     else:
-                        if self._set_nick(conn, command_args[0]):
+                        if self._set_nick(conn, command_args[0], command_args[1]):
                             self._clients[conn].identifier = self._clients[conn].get_nick() + "!" + \
                                 command_args[0] + "@" + self.name
                             self._send_motd(conn)
