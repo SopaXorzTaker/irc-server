@@ -4,4 +4,4 @@
 
 # Python temp files
 .py[cod]
-__pycache
+__pycache__
