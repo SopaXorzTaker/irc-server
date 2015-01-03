@@ -206,7 +206,8 @@ class IRCServer(object):
                 for client in self._clients:
                     for chan in self._channels:
                         if chan in client.channels:
-                            client.connection.send(":%s QUIT %s" % (self._clients[conn].get_nick(), " ".join(command_args)))
+                            client.connection.send(":%s QUIT %s" % (self._clients[conn].get_nick(),
+                                                                    " ".join(command_args)))
                             break
             elif command == "LUSERS":
                 self._send_lusers(conn)
@@ -340,7 +341,8 @@ class IRCServer(object):
 
     def disconnect(self, conn, message):
         client = self._clients[conn]
-        self._send_to_related(conn, ":%s QUIT :%s" % client.identifier, message)
+        identifier = client.identifier if client.identifier else client.nick
+        self._send_to_related(conn, ":%s QUIT :%s" % identifier, message)
         try:
             self._clients[conn].send("ERROR :Closing link [%s]: Disconnected" % conn.address)
         except IOError:
@@ -385,7 +387,7 @@ class IRCServer(object):
             return False
         return True
 
-    def _set_nick(self, conn, nick):
+    def _set_nick(self, conn, nick, ident=None):
         if self._nick_in_use(nick):
             self._send_nickname_in_use(conn, nick)
             return False
@@ -399,6 +401,10 @@ class IRCServer(object):
                 old_nick = self._clients[conn].nick
                 self._clients[conn].nick = nick
                 self._send_to_related(conn, "%s NICK %s" % (old_nick, nick))
+                if ident:
+                    self._clients[conn].ident = self._clients[conn].get_nick() + "!" + \
+                                                                   ident + "@" + self.name
+
             return True
 
 
