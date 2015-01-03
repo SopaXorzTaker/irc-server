@@ -1,14 +1,20 @@
 import time
-
+import string
+from queue import Queue
 from channel import Channel
 from client import Client
 
 
 __author__ = 'mark'
-from Queue import Queue
 import socket
 import connection
 from threading import Thread
+
+SPECIAL = "[]\`_^{|}"
+ALLOWED_NICKNAME = string.digits + string.ascii_letters + SPECIAL + "-"
+# noinspection PyUnboundLocalVariable
+ALLOWED_CHANNEL = "".join([chr(x) for x in range(128)]).replace("\0", "").replace("\7", "").replace("\13", "").replace("\10", "")\
+    .replace(" ", "").replace(",", "").replace(":", "")
 
 
 class IRCServer(object):
@@ -19,14 +25,27 @@ class IRCServer(object):
     running = None
     _clients = None
     _channels = None
+    _nick_change_failed = []
+
+    '''
+        This prevents memory leak when the client who had error was disconnected
+    '''
+    def _dead_check_thread(self):
+        while self.running:
+            for conn in self._nick_change_failed:
+                for client_conn in self._clients:
+                    if client_conn == conn:
+                        break
+                else:
+                    self._nick_change_failed.remove(conn)
 
     def _ping_check_thread(self):
         while self.running:
             time.sleep(1.0)
             for conn in self._clients.keys():
                 if self._clients[conn].last_pinged >= 250:
-                    print "[DBG] %s disconnected because ping has timed-out" % \
-                          str(conn.address)
+                    print("[DBG] %s disconnected because ping has timed-out" %
+                          str(conn.address))
                     self.disconnect(conn, "Ping timeout: 250 seconds")
                 else:
                     self._clients[conn].last_pinged += 1
@@ -47,10 +66,12 @@ class IRCServer(object):
                     for msg in conn.get_messages():
                         self._message_queue.put(msg)
                 except IOError:  # We couldn't read from socket, thus the connection is dead.
-                    print "[DBG] can't read from connection %s" % str(conn)
+                    print("[DBG] can't read from connection %s" % str(conn))
                     self._connections.remove(conn)
 
     def _message_handler_thread(self):
+        # TODO: this may leak memory when clients die, fix it later
+        self._nick_change_failed = []
         while self.running:
             msg = self._message_queue.get(True)
             text = msg.get_data()
@@ -61,43 +82,40 @@ class IRCServer(object):
             if command == "NICK":
                 if len(command_args) < 1:
                     self._send_not_enough_parameters(conn, command)
-                elif not conn in self._clients:
-                    self._clients[conn] = Client(connection=conn, nick=command_args[0])
-                    print "[DBG] Client connected!"
                 else:
-                    print "[DBG] %s is changing nick to %s!" % (self._clients[conn].nick, command_args[0])
-                    old_ident = self._clients[conn].identifier
-                    self._clients[conn].nick = command_args[0]
-                    self._clients[conn].identifier = self._clients[conn].get_nick() + "!" + \
-                                                        command_args[0] + "@" + self.name
-                    self._send_to_related(conn, ":%s NICK %s" % (old_ident, command_args[0]))
+                    if not self._set_nick(conn, command_args[0]):
+                        self._nick_change_failed.append(conn)
             elif command == "USER":
-                self._send_lusers(conn)
                 if conn in self._clients:
                     if len(command_args) < 1:
                         self._send_not_enough_parameters(conn, command)
                     else:
+                        self._send_lusers(conn)
                         self._clients[conn].real_name = command_args[:]
                         self._clients[conn].identifier = self._clients[conn].get_nick() + "!" + \
                                                                command_args[0] + "@" + self.name
                         self._send_motd(conn)
-                else:  # Another way to identifyy is USER command.
+                else:  # Another way to identify is USER command.
                     if len(command_args) < 1:
                         self._send_not_enough_parameters(conn, command)
+                    elif conn in self._nick_change_failed:
+                        self._nick_change_failed.remove(conn)
                     else:
-                        self._clients[conn] = Client(connection=conn, nick=command_args[0])
-                        self._send_motd(conn)
+                        if self._set_nick(conn, command_args[0]):
+                            self._send_motd(conn)
             elif command == "PRIVMSG" or command == "NOTICE":
                 if len(command_args) < 2:
                     self._send_not_enough_parameters(conn, command)
                 else:
+                    message_text = command_args[1] if not command_args[1][0] == ":" else \
+                        text.replace("\r\n", "")[text.index(":"):]
                     src = self._clients[conn].get_identifier()
                     dest = command_args[0]
                     if not dest.startswith("#"):
                         for clnt in self._clients.values():
                             if clnt.nick == dest:
                                 clnt.connection.send(
-                                    ":%s %s %s %s" % (src, command, dest, "".join(command_args[1:]))
+                                    ":%s %s %s :%s" % (src, command, dest, message_text)
                                 )
                                 break
                         else:
@@ -105,14 +123,16 @@ class IRCServer(object):
                     else:
                         for chan in self._channels:
                             if chan.name == dest:
-                                self._channel_broadcast(conn, chan, ":%s %s %s %s" %
-                                                             (src, command, dest, "".join(command_args[1:])))
+                                self._channel_broadcast(conn, chan, ":%s %s %s :%s" %
+                                            (src, command, dest, message_text))
                                 break
                         else:
                             self._send_no_user(conn, dest)
             elif command == "JOIN":
                 if len(command_args) < 1:
                     self._send_not_enough_parameters(conn, command)
+                elif not all(c in ALLOWED_CHANNEL for c in command_args[0]) and len(command_args[0]):
+                    self._send_no_channel(conn, command_args[0])
                 else:
                     for chan in self._channels:
                         if chan.name == command_args[0]:
@@ -143,7 +163,6 @@ class IRCServer(object):
                             break
                     else:
                         self._send_no_channel(conn, command_args[0])
-
 
             elif command == "PING":
                 if len(command_args):
@@ -205,21 +224,29 @@ class IRCServer(object):
         self._connections = []
         self._clients = {}
         self._channels = []
+        attempt = 0
         while True:
             try:
                 self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 self._sock.bind(self._bind_address)
                 break
             except socket.error:
-                pass
+                if attempt == 5:
+                    print("[FATAL] unable to open socket after 5 attempts, stopping.")
+                    self.stop()
+                    return
+
+                print("[DEBUG] unable to open socket, retry in 10 seconds")
+                attempt += 1
+                time.sleep(10)
         self._sock.listen(1)
-        print "Listening..."
+        print("Listening...")
         while self.running:
             sock, address = self._sock.accept()
             sock.setblocking(0)
             conn = connection.Connection(address, sock)
             self._connections.append(conn)
-            print "Connection! %s" % str(address)
+            print("Connection! %s" % str(address))
 
     def __init__(self, bind_address, name="server", motd="Hello, World"):
         self._message_queue = Queue()
@@ -233,6 +260,7 @@ class IRCServer(object):
         Thread(target=self._server_thread).start()
         Thread(target=self._message_handler_thread).start()
         Thread(target=self._message_thread).start()
+        Thread(target=self._dead_check_thread).start()
         Thread(target=self._ping_thread).start()
         Thread(target=self._ping_check_thread).start()
 
@@ -286,7 +314,6 @@ class IRCServer(object):
         self._clients[conn].send(":%s 254 %s %d :channels formed" % (self.name, nick, len(self._channels)))
         self._clients[conn].send(":%s 255 %s :I have %d clients and 1 servers" % (self.name, nick, len(self._clients)))
 
-
     def _send_no_channel(self, conn, chan_name):
         nick = self._clients[conn].get_nick()
         self._clients[conn].send(":%s 403 %s %s :No such channel" % (self.name, nick, chan_name))
@@ -302,6 +329,12 @@ class IRCServer(object):
     def _send_unknown_command(self, conn, command):
         nick = self._clients[conn].get_nick()
         self._clients[conn].send(":%s 421 %s %s :Unknown command" % (self.name, nick, command))
+
+    def _send_nickname_in_use(self, conn, nick):
+        conn.send(":%s 433 %s :Nickname already in use" % (self.name, nick))
+
+    def _send_erroneous_nickname(self, conn, nick):
+        conn.send(":%s 432 %s :Erroneous nickname" % (self.name, nick))
 
     def disconnect(self, conn, message):
         client = self._clients[conn]
@@ -329,6 +362,41 @@ class IRCServer(object):
                 continue
             if chan in client.channels:
                 client.send(msg)
+
+
+    def _nick_in_use(self, nick):
+        """
+        :param nick: Nickname of client
+        :type nick: str
+        :return: True if a client with that name exists, else False
+        """
+        for client in self._clients.values():
+            if client.nick == nick:
+                return True
+        else:
+            return False
+
+
+    def _valid_nick(self, nick):
+        if not all(c in ALLOWED_NICKNAME for c in nick) or len(nick) > 9 or\
+                not len(nick):
+            return False
+        return True
+
+    def _set_nick(self, conn, nick):
+        if self._nick_in_use(nick):
+            self._send_nickname_in_use(conn, nick)
+            return False
+        elif not self._valid_nick(nick):
+            self._send_erroneous_nickname(conn, nick)
+            return False
+        else:
+            if not conn in self._clients:
+                self._clients[conn] = Client(connection=conn, nick=nick)
+            else:
+                self._clients[conn].nick = nick
+            return True
+
 
     def __del__(self):
         self._sock.close()

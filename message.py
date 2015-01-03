@@ -2,7 +2,16 @@ __author__ = 'mark'
 
 
 class Message(object):
+    """
+
+    """
     def __init__(self, data, connection):
+        """
+        :param data: Message data
+        :type data: str
+        :param connection: Connection object
+        :type connection: connection.Connection
+        """
         self.data = data
         self.connection = connection
 
