@@ -70,7 +70,6 @@ class IRCServer(object):
                     self._connections.remove(conn)
 
     def _message_handler_thread(self):
-        # TODO: this may leak memory when clients die, fix it later
         self._nick_change_failed = []
         while self.running:
             msg = self._message_queue.get(True)
