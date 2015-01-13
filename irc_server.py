@@ -345,7 +345,7 @@ class IRCServer(object):
     def disconnect(self, conn, message):
         client = self._clients[conn]
         identifier = client.identifier if client.identifier else client.nick
-        self._send_to_related(conn, ":%s QUIT :%s" % identifier, message)
+        self._send_to_related(conn, ":%s QUIT :%s" % (identifier, message))
         try:
             self._clients[conn].send("ERROR :Closing link [%s]: Disconnected" % conn.address)
         except IOError:
